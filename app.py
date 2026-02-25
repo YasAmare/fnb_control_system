@@ -12,7 +12,6 @@ st.title("🍔 F&B Control Dashboard (MVP)")
 # ===============================
 items = ["Burger", "Fries", "Drink", "Chicken Wrap", "Pizza"]
 
-# Default purchase / inventory
 default_inventory = pd.DataFrame({
     "Ingredient": [
         "Beef", "Bun", "Lettuce", "Tomato", "Oil", "Cheese", "Chicken",
@@ -22,7 +21,6 @@ default_inventory = pd.DataFrame({
     "Unit_cost": [150, 20, 10, 8, 50, 25, 120, 5, 2, 1, 15]
 })
 
-# Recipes
 recipes = {
     "Burger": {"Beef": 1, "Bun": 1, "Lettuce": 0.1, "Tomato": 0.1, "Cheese": 0.2, "Oil": 0.05},
     "Fries": {"Oil": 0.1, "Potato": 0.5},
@@ -31,13 +29,12 @@ recipes = {
     "Pizza": {"Cheese": 0.3, "Tomato": 0.2, "Dough": 0.5, "Oil": 0.05}
 }
 
-# Load inventory
+# Load inventory and sales
 try:
     purchase_data = pd.read_csv("data/purchases.csv")
 except FileNotFoundError:
     purchase_data = default_inventory.copy()
 
-# Load sales log
 try:
     sales_log = pd.read_csv("data/sales.csv", parse_dates=["Date"])
 except FileNotFoundError:
@@ -48,53 +45,54 @@ except FileNotFoundError:
 # ===============================
 # 2️⃣ Sidebar Navigation
 # ===============================
-tab = st.sidebar.radio("Select Module", ["POS", "Inventory", "Recipes", "Profit", "Forecast"])
+tab = st.sidebar.radio("Select Module", ["POS", "Kitchen", "Inventory", "Recipes", "Profit", "Forecast"])
 
 # ===============================
-# 3️⃣ POS Module - Full Pipeline
+# 3️⃣ POS Module
 # ===============================
 if tab == "POS":
     st.subheader("💳 POS Terminal (Full Pipeline)")
 
-    # Session state
     if "purchase_data" not in st.session_state:
         st.session_state.purchase_data = purchase_data.copy()
     if "sales_log" not in st.session_state:
         st.session_state.sales_log = sales_log.copy()
+    if "pending_orders" not in st.session_state:
+        st.session_state.pending_orders = []
 
-    with st.form("order_form"):
-        st.write("### Enter Order Quantities")
-        order = {}
-        for item in items:
-            qty = st.number_input(f"{item}", min_value=0, value=0)
-            order[item] = qty
-        payment = st.radio("Payment Type", ["Cash", "Card"])
-        submit = st.form_submit_button("Submit Order")
+    st.write("### Enter Multiple Orders (Batch)")
+    num_orders = st.number_input("Number of orders to enter:", min_value=1, value=1, step=1)
+    order_list = []
+    for order_idx in range(num_orders):
+        with st.expander(f"Order #{order_idx+1}"):
+            order = {}
+            for item in items:
+                qty = st.number_input(f"{item}", min_value=0, value=0, key=f"{item}_{order_idx}")
+                order[item] = qty
+            payment = st.radio("Payment Type", ["Cash", "Card"], key=f"payment_{order_idx}")
+            order_list.append(order)
 
-    if submit:
-        # Check inventory
-        insufficient = []
-        for item_name, qty in order.items():
-            if qty == 0:
+    if st.button("Submit All Orders"):
+        for idx, order in enumerate(order_list):
+            insufficient = []
+            for item_name, qty in order.items():
+                if qty == 0: continue
+                if item_name in recipes:
+                    for ing, amt in recipes[item_name].items():
+                        required = qty * amt
+                        stock = st.session_state.purchase_data.loc[
+                            st.session_state.purchase_data["Ingredient"]==ing, "Qty_in_stock"
+                        ].values[0]
+                        if required > stock:
+                            insufficient.append(f"{ing} for {item_name} (need {required}, have {stock})")
+            if insufficient:
+                st.error(f"⚠ Order #{idx+1} cannot be processed due to insufficient stock:")
+                for msg in insufficient: st.write("- " + msg)
                 continue
-            if item_name in recipes:
-                for ing, amt in recipes[item_name].items():
-                    required = qty * amt
-                    stock = st.session_state.purchase_data.loc[
-                        st.session_state.purchase_data["Ingredient"]==ing, "Qty_in_stock"
-                    ].values[0]
-                    if required > stock:
-                        insufficient.append(f"{ing} for {item_name} (need {required}, have {stock})")
 
-        if insufficient:
-            st.error("⚠ Cannot process order due to insufficient stock:")
-            for msg in insufficient:
-                st.write("- " + msg)
-        else:
             # Update inventory
             for item_name, qty in order.items():
-                if qty == 0:
-                    continue
+                if qty == 0: continue
                 if item_name in recipes:
                     for ing, amt in recipes[item_name].items():
                         st.session_state.purchase_data.loc[
@@ -107,25 +105,46 @@ if tab == "POS":
                 new_row[i] = order[i]
             st.session_state.sales_log.loc[len(st.session_state.sales_log)] = new_row
 
-            # Kitchen ticket
-            st.write("### 🍳 Kitchen Ticket")
-            for item_name, qty in order.items():
-                if qty == 0:
-                    continue
-                st.write(f"**{item_name} x {qty}**")
-                if item_name in recipes:
-                    ing_list = ", ".join([f"{ing} x {amt*qty}" for ing, amt in recipes[item_name].items()])
-                    st.write(f"Ingredients: {ing_list}")
+            # Add to pending kitchen tickets
+            st.session_state.pending_orders.append(order)
 
-            st.success("✅ Order processed successfully!")
-
-            # Save CSVs
-            st.session_state.purchase_data.to_csv("data/purchases.csv", index=False)
-            st.session_state.sales_log.to_csv("data/sales.csv", index=False)
-            st.success("Inventory and sales log updated in CSV!")
+        st.success("✅ Orders submitted! Check the Kitchen tab for tickets.")
+        st.session_state.purchase_data.to_csv("data/purchases.csv", index=False)
+        st.session_state.sales_log.to_csv("data/sales.csv", index=False)
 
 # ===============================
-# 4️⃣ Inventory Module - Editable Table
+# 4️⃣ Kitchen Dashboard
+# ===============================
+elif tab == "Kitchen":
+    st.subheader("🍳 Kitchen Dashboard")
+    if "pending_orders" not in st.session_state or len(st.session_state.pending_orders) == 0:
+        st.info("No pending orders.")
+    else:
+        ticket_num = 1
+        for order_idx, order in enumerate(st.session_state.pending_orders):
+            with st.container():
+                st.markdown(f"**Order #{order_idx+1}**")
+                for item_name, qty in order.items():
+                    if qty == 0: continue
+                    st.markdown(f"**Ticket #{ticket_num} — {item_name} x {qty}**")
+                    if item_name in recipes:
+                        for ing, amt in recipes[item_name].items():
+                            remaining = st.session_state.purchase_data.loc[
+                                st.session_state.purchase_data["Ingredient"]==ing, "Qty_in_stock"
+                            ].values[0]
+                            line = f"- {ing}: {amt*qty} units (Remaining: {remaining})"
+                            if remaining < 5:
+                                st.markdown(f"<span style='color:red'>{line}</span>", unsafe_allow_html=True)
+                            else:
+                                st.write(line)
+                    st.markdown("---")
+                    ticket_num += 1
+        if st.button("Clear Completed Orders"):
+            st.session_state.pending_orders = []
+            st.success("Pending orders cleared.")
+
+# ===============================
+# 5️⃣ Inventory Module
 # ===============================
 elif tab == "Inventory":
     st.subheader("📦 Inventory Status")
@@ -136,7 +155,7 @@ elif tab == "Inventory":
         st.success("Inventory updated!")
 
 # ===============================
-# 5️⃣ Recipes Module - Costing
+# 6️⃣ Recipes Module
 # ===============================
 elif tab == "Recipes":
     st.subheader("📖 Recipe & Costing")
@@ -154,14 +173,13 @@ elif tab == "Recipes":
     st.write(f"**Total Cost per {recipe_name}: {cost_total:.2f} ETB**")
 
 # ===============================
-# 6️⃣ Profit & Charts
+# 7️⃣ Profit & Charts
 # ===============================
 elif tab == "Profit":
     st.subheader("💰 Profit & Sales Dashboard")
     df = st.session_state.sales_log.copy()
     df["Total_sales"] = df[items].sum(axis=1)
 
-    # Profit calculation
     daily_profit = []
     for idx, row in df.iterrows():
         profit = 0
@@ -175,20 +193,16 @@ elif tab == "Profit":
         daily_profit.append(profit)
     df["Profit"] = daily_profit
 
-    # Individual charts
     st.write("### Individual Item Sales Charts")
     for item_name in items:
         st.line_chart(df.set_index("Date")[[item_name]], height=200)
 
-    # Combined chart
     st.write("### Combined Sales Chart")
     st.line_chart(df.set_index("Date")[items + ["Total_sales"]], height=400)
 
-    # Profit chart
     st.write("### Daily Profit Chart")
     st.line_chart(df.set_index("Date")[["Profit"]], height=300)
 
-    # Export options
     st.write("### Export Data")
     if st.button("Export to CSV"):
         df.to_csv("data/sales_export.csv", index=False)
@@ -199,7 +213,7 @@ elif tab == "Profit":
         st.download_button("Download Excel", data=output.getvalue(), file_name="sales_export.xlsx")
 
 # ===============================
-# 7️⃣ Forecast Module
+# 8️⃣ Forecast Module
 # ===============================
 elif tab == "Forecast":
     st.subheader("📈 Sales Prediction (MVP)")

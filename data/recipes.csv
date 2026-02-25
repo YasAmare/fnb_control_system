@@ -1,1 +1,20 @@
-
+Item,Ingredient,Quantity
+Burger,Beef,1
+Burger,Bun,1
+Burger,Lettuce,0.1
+Burger,Tomato,0.1
+Burger,Cheese,0.2
+Burger,Oil,0.05
+Fries,Oil,0.1
+Fries,Potato,0.5
+Drink,Syrup,0.1
+Drink,Water,0.3
+Chicken Wrap,Chicken,0.3
+Chicken Wrap,Bun,1
+Chicken Wrap,Lettuce,0.1
+Chicken Wrap,Tomato,0.1
+Chicken Wrap,Oil,0.05
+Pizza,Cheese,0.3
+Pizza,Tomato,0.2
+Pizza,Dough,0.5
+Pizza,Oil,0.05

@@ -1,8 +1,6 @@
-
 import streamlit as st
 import pandas as pd
 import numpy as np
-from sklearn.linear_model import LinearRegression
 import matplotlib.pyplot as plt
 
 st.set_page_config(layout="wide")
@@ -11,10 +9,9 @@ st.title("🍔 F&B Control Dashboard (MVP)")
 # ===============================
 # 1️⃣ Mock Data Setup (Updated)
 # ===============================
-# Items
 items = ["Burger", "Fries", "Drink", "Chicken Wrap", "Pizza"]
 
-# Purchase / Inventory - all ingredients included
+# Purchase / Inventory
 purchase_data = pd.DataFrame({
     "Ingredient": [
         "Beef", "Bun", "Lettuce", "Tomato", "Oil", "Cheese", "Chicken",
@@ -33,8 +30,7 @@ recipes = {
     "Pizza": {"Cheese": 0.3, "Tomato": 0.2, "Dough": 0.5, "Oil": 0.05}
 }
 
-# Sales Log (POS)
-sales_columns = ["Date"] + items
+# Sales Log
 dates = pd.date_range(start="2026-01-01", periods=30)
 sales_log = pd.DataFrame(np.random.randint(10, 50, size=(30, len(items))), columns=items)
 sales_log.insert(0, "Date", dates)
@@ -62,6 +58,7 @@ if tab == "POS":
             new_row[i] = order[i]
         sales_log.loc[len(sales_log)] = new_row
         st.success("Sale recorded!")
+
         # Update inventory
         for item_name, qty in order.items():
             if item_name in recipes:
@@ -96,11 +93,15 @@ elif tab == "Recipes":
     st.write(f"**Total Cost per {recipe_name}: {cost_total:.2f} ETB**")
 
 # ===============================
-# 6️⃣ Profit Module
+# 6️⃣ Profit & Sales Charts Module
 # ===============================
 elif tab == "Profit":
-    st.subheader("💰 Profit Dashboard")
+    st.subheader("💰 Profit & Sales Dashboard")
+
+    # Total sales
     sales_log["Total_sales"] = sales_log[items].sum(axis=1)
+
+    # Daily profit
     daily_profit = []
     for idx, row in sales_log.iterrows():
         profit = 0
@@ -108,31 +109,49 @@ elif tab == "Profit":
             qty = row[item_name]
             rec = recipes.get(item_name, {})
             cost = sum([purchase_data.loc[purchase_data["Ingredient"]==ing, "Unit_cost"].values[0]*amt for ing, amt in rec.items()])
-            profit += (qty * cost * 1.5) - (qty * cost)  # Simple 50% markup
+            profit += (qty * cost * 1.5) - (qty * cost)  # 50% markup
         daily_profit.append(profit)
     sales_log["Profit"] = daily_profit
-    st.line_chart(sales_log.set_index("Date")[["Total_sales", "Profit"]])
+
+    # --- Individual Item Charts ---
+    st.write("### Individual Item Sales Charts")
+    for item_name in items:
+        st.line_chart(sales_log.set_index("Date")[[item_name]], height=200)
+
+    # --- Combined Sales Chart ---
+    st.write("### Combined Sales Chart")
+    st.line_chart(sales_log.set_index("Date")[items + ["Total_sales"]], height=400)
+
+    # --- Profit Chart ---
+    st.write("### Daily Profit Chart")
+    st.line_chart(sales_log.set_index("Date")[["Profit"]], height=300)
 
 # ===============================
-# 7️⃣ Forecast Module
+# 7️⃣ Forecast Module (Using numpy.polyfit)
 # ===============================
 elif tab == "Forecast":
     st.subheader("📈 Sales Prediction (MVP)")
-    X = np.arange(len(sales_log)).reshape(-1,1)
-    preds = {}
+
+    future_days = 7
+    pred_df = pd.DataFrame()
+    pred_df["Date"] = pd.date_range(start=sales_log["Date"].max()+pd.Timedelta(days=1), periods=future_days)
+
     for item in items:
         y = sales_log[item].values
-        model = LinearRegression()
-        model.fit(X, y)
-        future_days = 7
-        X_future = np.arange(len(X), len(X)+future_days).reshape(-1,1)
-        y_pred = model.predict(X_future)
-        preds[item] = np.round(y_pred)
-    pred_df = pd.DataFrame(preds)
-    pred_df["Date"] = pd.date_range(start=sales_log["Date"].max()+pd.Timedelta(days=1), periods=future_days)
+        x = np.arange(len(y))
+        coef = np.polyfit(x, y, 1)  # Linear fit
+        x_future = np.arange(len(y), len(y)+future_days)
+        y_pred = coef[0]*x_future + coef[1]
+        pred_df[item] = np.round(y_pred)
+
     st.dataframe(pred_df, use_container_width=True)
+
+    # Plot all items
+    plt.figure(figsize=(10,5))
     for item in items:
         plt.plot(pred_df["Date"], pred_df[item], label=item)
-    plt.legend()
     plt.title("7-Day Sales Forecast")
+    plt.legend()
+    plt.xticks(rotation=45)
+    plt.tight_layout()
     st.pyplot(plt)

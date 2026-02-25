@@ -2,12 +2,13 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from io import BytesIO
 
 st.set_page_config(layout="wide")
 st.title("🍔 F&B Control Dashboard (MVP)")
 
 # ===============================
-# 1️⃣ Mock Data Setup (Updated)
+# 1️⃣ Mock Data Setup
 # ===============================
 items = ["Burger", "Fries", "Drink", "Chicken Wrap", "Pizza"]
 
@@ -30,10 +31,13 @@ recipes = {
     "Pizza": {"Cheese": 0.3, "Tomato": 0.2, "Dough": 0.5, "Oil": 0.05}
 }
 
-# Sales Log
-dates = pd.date_range(start="2026-01-01", periods=30)
-sales_log = pd.DataFrame(np.random.randint(10, 50, size=(30, len(items))), columns=items)
-sales_log.insert(0, "Date", dates)
+# Sales Log - use CSV if exists, else create
+try:
+    sales_log = pd.read_csv("data/sales.csv", parse_dates=["Date"])
+except FileNotFoundError:
+    dates = pd.date_range(start="2026-01-01", periods=30)
+    sales_log = pd.DataFrame(np.random.randint(10,50,size=(30,len(items))), columns=items)
+    sales_log.insert(0, "Date", dates)
 
 # ===============================
 # 2️⃣ Sidebar Navigation
@@ -41,18 +45,20 @@ sales_log.insert(0, "Date", dates)
 tab = st.sidebar.radio("Select Module", ["POS", "Inventory", "Recipes", "Profit", "Forecast"])
 
 # ===============================
-# 3️⃣ POS Module
+# 3️⃣ POS Module - Dynamic CSV update
 # ===============================
 if tab == "POS":
     st.subheader("💳 POS Terminal (MVP)")
-    order = {}
-    for item in items:
-        qty = st.number_input(f"Quantity {item}", min_value=0, value=0)
-        order[item] = qty
 
-    payment = st.radio("Payment Type", ["Cash", "Card"])
+    with st.form("order_form"):
+        order = {}
+        for item in items:
+            qty = st.number_input(f"Quantity {item}", min_value=0, value=0)
+            order[item] = qty
+        payment = st.radio("Payment Type", ["Cash", "Card"])
+        submit = st.form_submit_button("Submit Sale")
 
-    if st.button("Submit Sale"):
+    if submit:
         new_row = {"Date": pd.Timestamp.now().normalize()}
         for i in items:
             new_row[i] = order[i]
@@ -65,19 +71,22 @@ if tab == "POS":
                 for ing, amt in recipes[item_name].items():
                     purchase_data.loc[purchase_data["Ingredient"]==ing, "Qty_in_stock"] -= qty*amt
 
+        # Save updated sales log to CSV
+        sales_log.to_csv("data/sales.csv", index=False)
+        st.success("Sales log updated in data/sales.csv!")
+
 # ===============================
-# 4️⃣ Inventory Module
+# 4️⃣ Inventory Module - Interactive Table
 # ===============================
 elif tab == "Inventory":
     st.subheader("📦 Inventory Status")
-    st.dataframe(purchase_data, use_container_width=True)
-    low_stock = purchase_data[purchase_data["Qty_in_stock"] < 5]
-    if not low_stock.empty:
-        st.warning("⚠ Low Stock Alert!")
-        st.dataframe(low_stock)
+    edited_inventory = st.data_editor(purchase_data, num_rows="dynamic")  # editable table
+    if st.button("Save Inventory Changes"):
+        edited_inventory.to_csv("data/purchases.csv", index=False)
+        st.success("Inventory updated in data/purchases.csv!")
 
 # ===============================
-# 5️⃣ Recipes Module
+# 5️⃣ Recipes Module - Costing
 # ===============================
 elif tab == "Recipes":
     st.subheader("📖 Recipe & Costing")
@@ -93,7 +102,7 @@ elif tab == "Recipes":
     st.write(f"**Total Cost per {recipe_name}: {cost_total:.2f} ETB**")
 
 # ===============================
-# 6️⃣ Profit & Sales Charts Module
+# 6️⃣ Profit & Sales Charts
 # ===============================
 elif tab == "Profit":
     st.subheader("💰 Profit & Sales Dashboard")
@@ -126,8 +135,18 @@ elif tab == "Profit":
     st.write("### Daily Profit Chart")
     st.line_chart(sales_log.set_index("Date")[["Profit"]], height=300)
 
+    # --- Export sales + profit to CSV / Excel ---
+    st.write("### Export Data")
+    if st.button("Export to CSV"):
+        sales_log.to_csv("data/sales_export.csv", index=False)
+        st.success("Sales exported to data/sales_export.csv")
+    if st.button("Export to Excel"):
+        output = BytesIO()
+        sales_log.to_excel(output, index=False)
+        st.download_button(label="Download Excel", data=output.getvalue(), file_name="sales_export.xlsx")
+
 # ===============================
-# 7️⃣ Forecast Module (Using numpy.polyfit)
+# 7️⃣ Forecast Module
 # ===============================
 elif tab == "Forecast":
     st.subheader("📈 Sales Prediction (MVP)")

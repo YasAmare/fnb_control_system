@@ -12,8 +12,8 @@ st.title("🍔 F&B Control Dashboard (MVP)")
 # ===============================
 items = ["Burger", "Fries", "Drink", "Chicken Wrap", "Pizza"]
 
-# Purchase / Inventory
-purchase_data = pd.DataFrame({
+# Default purchase / inventory
+default_inventory = pd.DataFrame({
     "Ingredient": [
         "Beef", "Bun", "Lettuce", "Tomato", "Oil", "Cheese", "Chicken",
         "Potato", "Syrup", "Water", "Dough"
@@ -31,7 +31,13 @@ recipes = {
     "Pizza": {"Cheese": 0.3, "Tomato": 0.2, "Dough": 0.5, "Oil": 0.05}
 }
 
-# Sales Log - use CSV if exists, else create
+# Load inventory
+try:
+    purchase_data = pd.read_csv("data/purchases.csv")
+except FileNotFoundError:
+    purchase_data = default_inventory.copy()
+
+# Load sales log
 try:
     sales_log = pd.read_csv("data/sales.csv", parse_dates=["Date"])
 except FileNotFoundError:
@@ -45,45 +51,89 @@ except FileNotFoundError:
 tab = st.sidebar.radio("Select Module", ["POS", "Inventory", "Recipes", "Profit", "Forecast"])
 
 # ===============================
-# 3️⃣ POS Module - Dynamic CSV update
+# 3️⃣ POS Module - Full Pipeline
 # ===============================
 if tab == "POS":
-    st.subheader("💳 POS Terminal (MVP)")
+    st.subheader("💳 POS Terminal (Full Pipeline)")
+
+    # Session state
+    if "purchase_data" not in st.session_state:
+        st.session_state.purchase_data = purchase_data.copy()
+    if "sales_log" not in st.session_state:
+        st.session_state.sales_log = sales_log.copy()
 
     with st.form("order_form"):
+        st.write("### Enter Order Quantities")
         order = {}
         for item in items:
-            qty = st.number_input(f"Quantity {item}", min_value=0, value=0)
+            qty = st.number_input(f"{item}", min_value=0, value=0)
             order[item] = qty
         payment = st.radio("Payment Type", ["Cash", "Card"])
-        submit = st.form_submit_button("Submit Sale")
+        submit = st.form_submit_button("Submit Order")
 
     if submit:
-        new_row = {"Date": pd.Timestamp.now().normalize()}
-        for i in items:
-            new_row[i] = order[i]
-        sales_log.loc[len(sales_log)] = new_row
-        st.success("Sale recorded!")
-
-        # Update inventory
+        # Check inventory
+        insufficient = []
         for item_name, qty in order.items():
+            if qty == 0:
+                continue
             if item_name in recipes:
                 for ing, amt in recipes[item_name].items():
-                    purchase_data.loc[purchase_data["Ingredient"]==ing, "Qty_in_stock"] -= qty*amt
+                    required = qty * amt
+                    stock = st.session_state.purchase_data.loc[
+                        st.session_state.purchase_data["Ingredient"]==ing, "Qty_in_stock"
+                    ].values[0]
+                    if required > stock:
+                        insufficient.append(f"{ing} for {item_name} (need {required}, have {stock})")
 
-        # Save updated sales log to CSV
-        sales_log.to_csv("data/sales.csv", index=False)
-        st.success("Sales log updated in data/sales.csv!")
+        if insufficient:
+            st.error("⚠ Cannot process order due to insufficient stock:")
+            for msg in insufficient:
+                st.write("- " + msg)
+        else:
+            # Update inventory
+            for item_name, qty in order.items():
+                if qty == 0:
+                    continue
+                if item_name in recipes:
+                    for ing, amt in recipes[item_name].items():
+                        st.session_state.purchase_data.loc[
+                            st.session_state.purchase_data["Ingredient"]==ing, "Qty_in_stock"
+                        ] -= qty * amt
+
+            # Update sales log
+            new_row = {"Date": pd.Timestamp.now().normalize()}
+            for i in items:
+                new_row[i] = order[i]
+            st.session_state.sales_log.loc[len(st.session_state.sales_log)] = new_row
+
+            # Kitchen ticket
+            st.write("### 🍳 Kitchen Ticket")
+            for item_name, qty in order.items():
+                if qty == 0:
+                    continue
+                st.write(f"**{item_name} x {qty}**")
+                if item_name in recipes:
+                    ing_list = ", ".join([f"{ing} x {amt*qty}" for ing, amt in recipes[item_name].items()])
+                    st.write(f"Ingredients: {ing_list}")
+
+            st.success("✅ Order processed successfully!")
+
+            # Save CSVs
+            st.session_state.purchase_data.to_csv("data/purchases.csv", index=False)
+            st.session_state.sales_log.to_csv("data/sales.csv", index=False)
+            st.success("Inventory and sales log updated in CSV!")
 
 # ===============================
-# 4️⃣ Inventory Module - Interactive Table
+# 4️⃣ Inventory Module - Editable Table
 # ===============================
 elif tab == "Inventory":
     st.subheader("📦 Inventory Status")
-    edited_inventory = st.data_editor(purchase_data, num_rows="dynamic")  # editable table
+    edited_inventory = st.data_editor(st.session_state.purchase_data, num_rows="dynamic")
     if st.button("Save Inventory Changes"):
         edited_inventory.to_csv("data/purchases.csv", index=False)
-        st.success("Inventory updated in data/purchases.csv!")
+        st.session_state.purchase_data = edited_inventory.copy()
+        st.success("Inventory updated!")
 
 # ===============================
 # 5️⃣ Recipes Module - Costing
@@ -95,77 +145,76 @@ elif tab == "Recipes":
     rec = recipes[recipe_name]
     cost_total = 0
     for ing, amt in rec.items():
-        unit_cost = purchase_data.loc[purchase_data["Ingredient"]==ing, "Unit_cost"].values[0]
+        unit_cost = st.session_state.purchase_data.loc[
+            st.session_state.purchase_data["Ingredient"]==ing, "Unit_cost"
+        ].values[0]
         cost = unit_cost * amt
         st.write(f"{ing}: {amt} unit(s) → Cost: {cost:.2f} ETB")
         cost_total += cost
     st.write(f"**Total Cost per {recipe_name}: {cost_total:.2f} ETB**")
 
 # ===============================
-# 6️⃣ Profit & Sales Charts
+# 6️⃣ Profit & Charts
 # ===============================
 elif tab == "Profit":
     st.subheader("💰 Profit & Sales Dashboard")
+    df = st.session_state.sales_log.copy()
+    df["Total_sales"] = df[items].sum(axis=1)
 
-    # Total sales
-    sales_log["Total_sales"] = sales_log[items].sum(axis=1)
-
-    # Daily profit
+    # Profit calculation
     daily_profit = []
-    for idx, row in sales_log.iterrows():
+    for idx, row in df.iterrows():
         profit = 0
         for item_name in items:
             qty = row[item_name]
             rec = recipes.get(item_name, {})
-            cost = sum([purchase_data.loc[purchase_data["Ingredient"]==ing, "Unit_cost"].values[0]*amt for ing, amt in rec.items()])
-            profit += (qty * cost * 1.5) - (qty * cost)  # 50% markup
+            cost = sum([st.session_state.purchase_data.loc[
+                st.session_state.purchase_data["Ingredient"]==ing, "Unit_cost"
+            ].values[0]*amt for ing, amt in rec.items()])
+            profit += (qty*cost*1.5) - (qty*cost)
         daily_profit.append(profit)
-    sales_log["Profit"] = daily_profit
+    df["Profit"] = daily_profit
 
-    # --- Individual Item Charts ---
+    # Individual charts
     st.write("### Individual Item Sales Charts")
     for item_name in items:
-        st.line_chart(sales_log.set_index("Date")[[item_name]], height=200)
+        st.line_chart(df.set_index("Date")[[item_name]], height=200)
 
-    # --- Combined Sales Chart ---
+    # Combined chart
     st.write("### Combined Sales Chart")
-    st.line_chart(sales_log.set_index("Date")[items + ["Total_sales"]], height=400)
+    st.line_chart(df.set_index("Date")[items + ["Total_sales"]], height=400)
 
-    # --- Profit Chart ---
+    # Profit chart
     st.write("### Daily Profit Chart")
-    st.line_chart(sales_log.set_index("Date")[["Profit"]], height=300)
+    st.line_chart(df.set_index("Date")[["Profit"]], height=300)
 
-    # --- Export sales + profit to CSV / Excel ---
+    # Export options
     st.write("### Export Data")
     if st.button("Export to CSV"):
-        sales_log.to_csv("data/sales_export.csv", index=False)
-        st.success("Sales exported to data/sales_export.csv")
+        df.to_csv("data/sales_export.csv", index=False)
+        st.success("Exported to data/sales_export.csv")
     if st.button("Export to Excel"):
         output = BytesIO()
-        sales_log.to_excel(output, index=False)
-        st.download_button(label="Download Excel", data=output.getvalue(), file_name="sales_export.xlsx")
+        df.to_excel(output, index=False)
+        st.download_button("Download Excel", data=output.getvalue(), file_name="sales_export.xlsx")
 
 # ===============================
 # 7️⃣ Forecast Module
 # ===============================
 elif tab == "Forecast":
     st.subheader("📈 Sales Prediction (MVP)")
-
     future_days = 7
     pred_df = pd.DataFrame()
-    pred_df["Date"] = pd.date_range(start=sales_log["Date"].max()+pd.Timedelta(days=1), periods=future_days)
-
+    pred_df["Date"] = pd.date_range(start=st.session_state.sales_log["Date"].max()+pd.Timedelta(days=1), periods=future_days)
     for item in items:
-        y = sales_log[item].values
+        y = st.session_state.sales_log[item].values
         x = np.arange(len(y))
-        coef = np.polyfit(x, y, 1)  # Linear fit
+        coef = np.polyfit(x, y, 1)
         x_future = np.arange(len(y), len(y)+future_days)
         y_pred = coef[0]*x_future + coef[1]
         pred_df[item] = np.round(y_pred)
 
     st.dataframe(pred_df, use_container_width=True)
-
-    # Plot all items
     plt.figure(figsize=(10,5))
     for item in items:
         plt.plot(pred_df["Date"], pred_df[item], label=item)

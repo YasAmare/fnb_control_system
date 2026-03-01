@@ -113,17 +113,25 @@ if tab == "POS":
         st.session_state.sales_log.to_csv("data/sales.csv", index=False)
 
 # ===============================
-# 4️⃣ Kitchen Dashboard
+# 4️⃣ Kitchen Dashboard (Independent Tickets)
 # ===============================
 elif tab == "Kitchen":
     st.subheader("🍳 Kitchen Dashboard")
     if "pending_orders" not in st.session_state or len(st.session_state.pending_orders) == 0:
         st.info("No pending orders.")
     else:
-        ticket_num = 1
+        remove_orders = []
         for order_idx, order in enumerate(st.session_state.pending_orders):
+            ticket_key = f"ticket_{order_idx}"
+            # Pronounced container for each order
             with st.container():
-                st.markdown(f"**Order #{order_idx+1}**")
+                st.markdown(
+                    f"<div style='border:3px solid #4CAF50; padding:15px; margin-bottom:20px; border-radius:10px; background-color:#f9f9f9;'>",
+                    unsafe_allow_html=True
+                )
+                st.markdown(f"### Order #{order_idx+1}")
+
+                ticket_num = 1
                 for item_name, qty in order.items():
                     if qty == 0: continue
                     st.markdown(f"**Ticket #{ticket_num} — {item_name} x {qty}**")
@@ -139,9 +147,15 @@ elif tab == "Kitchen":
                                 st.write(line)
                     st.markdown("---")
                     ticket_num += 1
-        if st.button("Clear Completed Orders"):
-            st.session_state.pending_orders = []
-            st.success("Pending orders cleared.")
+
+                # Done button for this ticket
+                if st.button("Mark Done", key=f"done_{order_idx}"):
+                    remove_orders.append(order)
+                    st.success(f"Order #{order_idx+1} marked as completed!")
+
+        # Remove completed orders
+        for completed in remove_orders:
+            st.session_state.pending_orders.remove(completed)
 
 # ===============================
 # 5️⃣ Inventory Module
